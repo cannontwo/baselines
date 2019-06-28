@@ -6,6 +6,7 @@ from baselines import logger
 from collections import deque
 from baselines.common import explained_variance, set_global_seeds
 from baselines.common.policies import build_policy
+from baselines.common.tf_util import get_session
 try:
     from mpi4py import MPI
 except ImportError:
@@ -110,6 +111,12 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
 
     if load_path is not None:
         model.load(load_path)
+
+    computed_maps = model.get_feature_maps()
+    with open('tmp.txt', 'w') as out_file:
+        for key, val in computed_maps.items():
+            out_file.write("{}: {}\n".format(key, val))
+
     # Instantiate the runner object
     runner = Runner(env=env, model=model, nsteps=nsteps, gamma=gamma, lam=lam)
     if eval_env is not None:

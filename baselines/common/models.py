@@ -4,6 +4,14 @@ from baselines.a2c import utils
 from baselines.a2c.utils import conv, fc, conv_to_fc, batch_to_seq, seq_to_batch
 from baselines.common.mpi_running_mean_std import RunningMeanStd
 
+### SkNet imports
+import matplotlib
+matplotlib.use('Agg')
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+
+
 mapping = {}
 
 def register(name):
@@ -90,15 +98,99 @@ def mlp(num_layers=2, num_hidden=64, activation=tf.tanh, layer_norm=False):
 
     function that builds fully connected network with a given input tensor / placeholder
     """
+    ######################
+    # SkNet functions
+    ######################
+
+    # Number of grid points
+    N = 350
+    # Grid
+    TIME = np.linspace(-7,7,N)
+    X = np.meshgrid(TIME, TIME)
+    X = np.stack([X[0].flatten(), X[1].flatten()], 1).astype('float32')
+
+
+    def states2values(states, state2value_dict=None, return_dict=False):
+        """Given binary masks obtained for example from the ReLU activation, 
+        convert the binary vectors to a single float scalar, the same scalar for
+        the same masks. This allows to drastically reduce the memory overhead to
+        keep track of a large number of masks. The mapping mask -> real is kept
+        inside a dict and thus allow to go from one to another. Thus given a large
+        collection of masks, one ends up with a large collection of scalars and
+        a mapping mask <-> real only for unique masks and thus allow reduced memory
+        requirements.
+        Parameters
+        ----------
+        states : bool matrix
+            the matrix of shape (#samples,#binary values). Thus if using a deep net
+            the masks of ReLU for all the layers must first be flattened prior
+            using this function.
+        state2value_dict : dict
+            optional dict containing an already built mask <-> real mapping which
+            should be used and updated given the states value.
+        return_dict : bool
+            if the update/created dict should be return as part of the output
+        Returns
+        -------
+        values : scalar vector
+            a vector of length #samples in which each entry is the scalar
+            representation of the corresponding mask from states
+        state2value_dict : dict (optional)
+            the newly created or updated dict mapping mask to value and vice-versa.
+        """
+        if state2value_dict is None:
+            state2value_dict = dict()
+        if 'count' not in state2value_dict:
+            state2value_dict['count']=0
+        values = np.zeros(states.shape[0])
+        for i,state in enumerate(states):
+            str_s = ''.join(state.astype('uint8').astype('str'))
+            if(str_s not in state2value_dict):
+                state2value_dict[str_s]   = state2value_dict['count']
+                state2value_dict['count']+= 0.001
+            values[i] = state2value_dict[str_s]
+        return values
+
+    def grad(x,duplicate=0):
+        #compute each directional (one step) derivative as a boolean mask
+        #representing jump from one region to another and add them (boolean still)
+        g_vertical   = np.greater(np.pad(np.abs(x[1:]-x[:-1]),((1,0),(0,0)),'constant'),0)
+        g_horizontal = np.greater(np.pad(np.abs(x[:,1:]-x[:,:-1]),[[0,0],[1,0]],'constant'),0)
+        g_diagonaldo = np.greater(np.pad(np.abs(x[1:,1:]-x[:-1,:-1]),[[1,0],[1,0]],'constant'),0)
+        g_diagonalup = np.greater(np.pad(np.abs(x[:-1:,1:]-x[1:,:-1]),[[1,0],[1,0]],'constant'),0)
+        overall      = g_vertical+g_horizontal+g_diagonaldo+g_diagonalup
+        if duplicate>0:
+            overall                 = np.stack([np.roll(overall,k,1) for k in range(duplicate+1)]\
+                                        +[np.roll(overall,k,0) for k in range(duplicate+1)]).sum(0)
+            overall[:duplicate]    *= 0
+            overall[-duplicate:]   *= 0
+            overall[:,:duplicate]  *= 0
+            overall[:,-duplicate:] *= 0
+        return np.greater(overall,0).astype('float32')
+
+    def get_input_space_partition(states,N,M,duplicate=1):
+        #the following should take as input a collection of points
+        #in the input space and return a list of binary states, each 
+        #element of the list is for 1 specific layer and it is a 2D array
+        if states.ndim>1:
+            states = states2values(states)
+        partitioning  = grad(states.reshape((N,M)).astype('float32'),duplicate)
+        return partitioning
+    ######################
+    # End SkNet functions
+    ######################
+
     def network_fn(X):
+        outputs = []
         h = tf.layers.flatten(X)
         for i in range(num_layers):
             h = fc(h, 'mlp_fc{}'.format(i), nh=num_hidden, init_scale=np.sqrt(2))
             if layer_norm:
                 h = tf.contrib.layers.layer_norm(h, center=True, scale=True)
             h = activation(h)
+            outputs.append(h)
 
-        return h
+        return outputs
 
     return network_fn
 

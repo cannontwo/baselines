@@ -1,5 +1,6 @@
 import tensorflow as tf
 import functools
+import numpy as np
 
 from baselines.common.tf_util import get_session, save_variables, load_variables
 from baselines.common.tf_util import initialize
@@ -34,13 +35,17 @@ class Model(object):
         with tf.variable_scope('ppo2_model', reuse=tf.AUTO_REUSE):
             # CREATE OUR TWO MODELS
             # act_model that is used for sampling
-            act_model = policy(nbatch_act, 1, sess)
+            act_model, feature_maps = policy(nbatch_act, 1, sess)
 
             # Train model for training
             if microbatch_size is None:
-                train_model = policy(nbatch_train, nsteps, sess)
+                train_model, _ = policy(nbatch_train, nsteps, sess)
             else:
-                train_model = policy(microbatch_size, nsteps, sess)
+                train_model, _ = policy(microbatch_size, nsteps, sess)
+
+        self.feature_maps = feature_maps
+        self.ob_space = ob_space
+        self.ac_space = ac_space
 
         # CREATE THE PLACEHOLDERS
         self.A = A = train_model.pdtype.sample_placeholder([None])
@@ -157,3 +162,17 @@ class Model(object):
             td_map
         )[:-1]
 
+    def get_feature_maps(self):
+        ### Getting feature maps ################
+        print("\n\nFeature maps:")
+        print(self.feature_maps)
+        print("\n\n")
+        line = np.linspace(self.ob_space.low[0], self.ob_space.high[0],100)
+        X, Y = np.meshgrid(line, line)
+        data = np.stack([X.flatten(), Y.flatten()], 1)
+
+        empirical_feature_maps = {}
+        for i in data:
+            empirical_feature_maps[tuple(i)] = self.sess.run(self.feature_maps, feed_dict={self.act_model.X : i.reshape(1,-1)})
+
+        return empirical_feature_maps

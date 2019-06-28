@@ -139,7 +139,9 @@ def build_policy(env, policy_network, value_network=None,  normalize_observation
         encoded_x = encode_observation(ob_space, encoded_x)
 
         with tf.variable_scope('pi', reuse=tf.AUTO_REUSE):
-            policy_latent = policy_network(encoded_x)
+            policy_latent_outputs = policy_network(encoded_x)
+            policy_latent = policy_latent_outputs[-1]
+
             if isinstance(policy_latent, tuple):
                 policy_latent, recurrent_tensors = policy_latent
 
@@ -174,7 +176,10 @@ def build_policy(env, policy_network, value_network=None,  normalize_observation
             estimate_q=estimate_q,
             **extra_tensors
         )
-        return policy
+
+        policy_latent_outputs.append(policy.pi)
+        feature_maps = tf.concat(policy_latent_outputs, -1)
+        return (policy, feature_maps)
 
     return policy_fn
 
